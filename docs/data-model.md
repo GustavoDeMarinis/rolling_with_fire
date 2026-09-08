@@ -1,6 +1,6 @@
 # Modelo de datos — MVP
 
-Postgres vía Ecto. Reemplaza el schema de `architecture.md`.
+Postgres vía Ecto. Es el schema canónico: `architecture.md` no lo repite.
 
 ---
 

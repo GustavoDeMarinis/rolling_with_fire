@@ -1,85 +1,87 @@
-# Product Vision — Rolling With Fire
+# Visión de producto — Rolling With Fire
 
-## Vision Statement
+## Tesis
 
-Ser la herramienta de dados para rol más confiable, rápida y social del mercado Android hispanohablante, con un modelo de negocio sostenible desde el día uno basado en utilidad real, no en suscripciones forzadas.
+**El broadcast instantáneo de la tirada es el producto.** Cinco personas mirando el
+mismo dado caer al mismo tiempo, desde cinco lugares distintos. Todo lo demás
+—historial, macros, permisos, perfiles— existe para sostener ese momento.
 
----
-
-## Horizonte: 12 meses
-
-| Milestone | Objetivo |
-|-----------|----------|
-| M1 (mes 1-2) | App funcional offline, tiradas personales, historial local |
-| M2 (mes 3-4) | Backend estable, autenticación, historial en nube |
-| M3 (mes 5-6) | Salas asíncronas, grupos de juego persistentes |
-| M4 (mes 7-9) | Salas live en tiempo real, presencia de usuarios |
-| M5 (mes 10-12) | Monetización activa: skins, donaciones, Google Play Billing |
+No es una feature de la tercera versión. Sin eso, esto es un dice roller genérico
+más, y ese mercado ya está saturado.
 
 ---
 
 ## Posicionamiento
 
-**Para quién:** Jugadores de rol de mesa (D&D, Pathfinder, CoC, etc.) que juegan de forma remota o híbrida.
+**Para quién:** jugadores de rol de mesa (D&D, Pathfinder, CoC) que juegan remoto o
+híbrido, en Android, empezando por el mercado hispanohablante.
 
-**Qué resolvemos:** El dolor de usar bots de Discord, apps genéricas de dados sin contexto de sala, o grupos de WhatsApp para coordinar tiradas.
+**Qué resolvemos:** la tirada hoy vive en un bot de Discord que escupe texto, en una
+app de dados sin contexto de sala, o en un grupo de WhatsApp. En los tres casos se
+pierde lo mismo: el momento compartido.
 
 **Cómo nos diferenciamos:**
 
-- Tiradas generadas en **servidor** (anti-trampa verificable).
-- Historial persistente de partida por sala.
-- Configuraciones de dados compuestas guardadas (macros de tirada).
-- UX pensada para rol de mesa, no para casino.
-- Modelo freemium con valor real en el tier gratuito.
+| Factor | Apps típicas | Rolling With Fire |
+|---|---|---|
+| Tirada | Client-side | Server-side, resultado único canónico (D1) |
+| Sincronía | El que tira ve primero | Reveal sincronizado por plazo (D2) |
+| Historial de sala | No, o efímero | Persistente, paginado por cursor (D10) |
+| Tiradas compuestas | Raras, o con parser de fórmulas | Pasos ordenados, editables, con nombre (D3) |
+| Personajes | Variables globales del usuario | Perfiles portables: PJ, NPC, monstruo (D4) |
+| Tiradas ocultas | Inexistentes | Declaradas al tirar, filtradas server-side (D5) |
+| Peso | 25–40MB | ~15MB, pensada para gama baja (D13) |
+| Monetización | Ads agresivos o paywall | Gratis. Donaciones (D12) |
+
+El desglose es parte del diferencial, no un detalle: cada paso entra a la vista con
+su nombre y su acumulado (`+3 Fuerza`… `+2 Rage`) y el total se arma delante del
+jugador. Eso es lo que hace buena la tirada de Baldur's Gate 3, y no son los
+polígonos.
 
 ---
 
-## Diferencial Competitivo
+## Modelo de sostenimiento
 
-| Factor | Competidores típicos | Rolling With Fire |
-|--------|----------------------|-------------------|
-| Generación de dados | Client-side | Server-side (verificable) |
-| Historial de sala | No o efímero | Persistente en DB |
-| Macros de tirada | Raro | First-class feature |
-| Anti-fraude | Inexistente | Arquitectura base |
-| Monetización | Ads agresivos o paywall | Freemium ético |
-| Mercado | Global genérico | Hispanohablante + global |
+**La app es gratis y no tiene tier pago.** Se sostiene con donaciones (D12).
 
----
+Eso no es altruismo, es la consecuencia de dos elecciones: BEAM hace que un usuario
+conectado y ocioso cueste casi nada, y no hay infraestructura de pagos que mantener.
+Descartados explícitamente: skins cosméticas, Google Play Billing, suscripciones.
 
-## Estrategia Bootstrap
+Costo operativo estimado hasta miles de usuarios: **< $20 USD/mes** en un VPS único.
 
-### Principios de costos
-
-1. **VPS único al inicio** — Un solo servidor cubre V1 y V2 cómodamente.
-2. **PostgreSQL self-hosted** — Sin costos de DB administrada hasta escalar.
-3. **Sin CDN hasta necesitarlo** — Assets estáticos servidos desde el VPS inicial.
-4. **Expo (React Native)** — Un solo codebase mobile cubre Android; iOS es optativo futuro.
-5. **Monetización en V4** — No invertir en infraestructura de pagos antes de tener usuarios reales.
-
-### Umbral de rentabilidad estimado
-
-> **Validar antes de escalar.** El objetivo para M6 no es ganancia, es retención y NPS positivo.
-
-- Break-even objetivo: 500 usuarios activos mensuales con conversión del 5% a skins/donaciones.
-- Costo operativo estimado V1-V2: **< $20 USD/mes** (Hetzner CX21 o DigitalOcean Basic).
+> Donaciones entran cuando haya usuarios. Nada de infraestructura de pagos antes.
 
 ---
 
-## Riesgos de Producto a Vigilar
+## Cómo se llega
 
-- Nicho pequeño si no se expanden sistemas de rol soportados.
-- Dependencia de que el Mobile Developer soporte Expo sin fricción mayor.
-- El socio UX/UI es futuro — V1 puede sufrir en diseño; priorizar funcionalidad y mejorar visual en V2.
+El orden de trabajo está en `mvp.md`, y no es por capas: es **por miedo**. Primero
+un APK hablándole a Phoenix con un solo botón (M0), porque es lo que valida el
+riesgo real —que la animación pelee con Flutter— en días en vez de meses.
 
 ---
 
-## Open Strategic Questions
+## Riesgos de producto a vigilar
 
-> Estas preguntas deben responderse antes de V2:
+- El nicho es chico si no se soportan varios sistemas de rol. El modelo de pasos
+  ordenados (D3) es agnóstico a propósito por eso.
+- No hay diseñador. El presupuesto visual va donde se nota: la animación del dado y
+  el desglose. El resto puede ser sobrio.
+- Una app gratis sin conversión depende de que las donaciones existan. Si no
+  aparecen, el costo es bajo igual — pero el crecimiento tiene techo.
 
-1. ¿Se apunta únicamente a Android o se incluye iOS desde el inicio con Expo?
-2. ¿El modelo de salas es gratuito ilimitado o hay un límite de salas por usuario free?
-3. ¿Se parte con idioma español first o inglés first para el mercado?
-4. ¿Las skins son puramente cosméticas o hay elementos de gameplay asociados?
-5. ¿Se contemplan salas públicas en un "lobby" tipo directorio, o solo salas privadas por invitación?
+---
+
+## Preguntas abiertas
+
+Las de producto están cerradas: salas públicas, límites del tier gratuito y modelo
+de monetización quedaron resueltas por D6, D12 y el alcance de `mvp.md`.
+
+Queda una sola, y es de mercado, no de producto:
+
+1. **¿Español first o inglés first?** No bloquea el MVP — bloquea la publicación en
+   Play Store.
+
+Lo único diferido del lado técnico es el **mecanismo** de autenticación (D15), con
+fecha límite clara: antes de que el servidor salga de la LAN.

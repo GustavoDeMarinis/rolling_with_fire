@@ -1,244 +1,170 @@
-# Architecture — Rolling With Fire
+# Arquitectura — Rolling With Fire
 
-## Filosofía de Diseño
+Stack, procesos y despliegue. **No repite** lo que ya está fijado en otro lado:
 
-> **Evolutionary Architecture:** Cada decisión técnica debe soportar V1 sin comprometer V4.
-> No se construye para el futuro inmediato, se construye para no romper el futuro.
-
----
-
-## Vista General por Versión
-
-```
-V1: Mobile ──────────────────────────────> Backend REST
-         (offline-first + sync opcional)   (Auth + Historial)
-
-V2: Mobile ─────────────────────────────> Backend REST
-                                           (Salas + Async Rolls)
-
-V3: Mobile ─────────────────────────────> Backend REST + WebSocket
-                                           (Live Rooms + Events)
-
-V4: Mobile ─────────────────────────────> Backend REST + WebSocket + Billing
-                                           (Skins + Payments + Anti-fraude)
-```
+- El schema vive en `data-model.md`.
+- Los eventos del channel viven en `realtime-contract.md`.
+- El *por qué* de cada elección vive en `decisions.md` (D1–D15).
 
 ---
 
-## Stack Técnico
+## Forma general
 
-### Mobile
+Un monolito Phoenix y una app Flutter. Una sola conexión: el WebSocket.
 
-| Tecnología | Decisión | Alternativa Considerada |
-|------------|----------|------------------------|
-| **React Native + Expo** | ✅ Aprobado | Kotlin puro (mayor costo inicial) |
-| Expo Go (V1) | Para desarrollo rápido | EAS Build desde V2 |
-| EAS Build (V2+) | Para distribución real | Play Store manual |
-| AsyncStorage | Historial offline V1 | SQLite (si historial es complejo) |
-| Socket.IO Client | WebSockets V3 | WS nativo |
+```
+Flutter (Android)  ──── WebSocket ────>  Phoenix
+                                          ├── UserSocket.connect/3   token → user_id (D15)
+                                          ├── RoomChannel            un canal por sala
+                                          ├── Room GenServer         uno por sala activa
+                                          └── Ecto ──> PostgreSQL
+```
 
-> ⚠ **Riesgo Expo:** Algunas integraciones nativas (Google Play Billing, biometría) pueden requerir un custom dev client. Planificar el eject parcial antes de V4.
+No hay API REST. La tirada viaja por el channel, no por `POST /rolls`: mandarla por
+HTTP le entrega el resultado al que tiró antes que a nadie, que es exactamente lo
+que D2 evita.
 
-### Backend
+---
 
-| Tecnología | Decisión | Alternativa Considerada |
-|------------|----------|------------------------|
-| **Node.js + Express** | ✅ Aprobado | Fastify (mayor perf, menor ecosistema) |
-| **Prisma ORM** | ✅ Aprobado | TypeORM (más verbose), Drizzle (más moderno pero menos maduro) |
-| **PostgreSQL** | ✅ Aprobado | MySQL (menos features JSON), MongoDB (no relacional, pérdida de integridad) |
-| **Socket.IO** | ✅ para V3 | WS puro (más control, más código) |
-| JWT (Access + Refresh) | Auth stateless | Sessions (más complejo con WebSockets) |
+## Stack
+
+### Backend — Elixir + Phoenix (D12)
+
+Channels, PubSub y Presence son literalmente el producto, no una librería que hay
+que elegir. Un WebSocket ocioso en BEAM cuesta casi nada, y eso es lo que hace
+viable una app gratis sostenida por donaciones.
+
+| Componente | Elección |
+|---|---|
+| Runtime | Elixir sobre BEAM |
+| Web / tiempo real | Phoenix Channels + PubSub + Presence |
+| Persistencia | PostgreSQL vía Ecto |
+| RNG | `:crypto.strong_rand_bytes` (CSPRNG), server-side siempre (D1) |
+| Tokens | `Phoenix.Token` — sin dependencias (D15) |
+| Pub/Sub distribuido | Erlang nativo. **Sin Redis** |
+
+### Mobile — Flutter (D13)
+
+AOT a ARM, sin runtime de JS: ~15MB con split por ABI, y mejor comportamiento en
+gama baja. "Corre en cualquier teléfono" es el pitch del producto, así que se elige
+el que efectivamente es mejor en eso.
+
+La animación es coreografía 2D, no física ni 3D en runtime (D14): un sprite y su
+transformada. Assets producidos offline — un loop de giro borroneado por tipo de
+dado, más una imagen por cara.
+
+Android primero. iOS está fuera del MVP.
 
 ### Infraestructura
 
-| Componente | V1-V2 | V3-V4 |
-|------------|-------|-------|
-| Servidor | 1 VPS (Hetzner CX21 ~€4/mes) | Mismo VPS o upgrade vertical |
-| Base de datos | PostgreSQL en mismo VPS | Separar VPS de DB si > 10k usuarios |
-| Contenedores | Docker Compose | Docker Compose (mantener hasta necesitar K8s) |
-| Reverse Proxy | Nginx | Nginx (agregar rate limiting en V3) |
-| SSL | Let's Encrypt (Certbot) | Mismo |
-| CI/CD | GitHub Actions básico | GitHub Actions + rollback strategy |
+Un VPS, Docker, Postgres al lado, Nginx con TLS de Let's Encrypt terminando el
+WebSocket. Es suficiente y sigue siéndolo por mucho más tiempo del que suele
+asumirse.
+
+Antes de eso, M0 corre en la LAN de casa: Phoenix en la PC, APK en el celular.
 
 ---
 
-## Modelo de Datos — Diseño Evolutivo
+## Procesos: un GenServer por sala
 
-### Core Entities
+Arranca en el primer join, termina en el último leave (con hibernate de gracia para
+no rebotar en reconexiones).
 
-```sql
--- USERS
-users (
-  id          UUID PRIMARY KEY,
-  username    TEXT UNIQUE NOT NULL,
-  email       TEXT UNIQUE NOT NULL,
-  password_hash TEXT NOT NULL,
-  created_at  TIMESTAMPTZ DEFAULT NOW(),
-  updated_at  TIMESTAMPTZ DEFAULT NOW()
-)
+Lo que gana estando serializado en un solo proceso:
 
--- ROOMS
-rooms (
-  id          UUID PRIMARY KEY,
-  name        TEXT NOT NULL,
-  description TEXT,
-  is_public   BOOLEAN DEFAULT FALSE,
-  password_hash TEXT,                    -- NULL si pública
-  owner_id    UUID REFERENCES users(id),
-  created_at  TIMESTAMPTZ DEFAULT NOW(),
-  archived_at TIMESTAMPTZ               -- soft delete
-)
+- **`seq` sin contención.** Todas las tiradas de la sala pasan por el mismo proceso,
+  así que el contador monótono se asigna en orden por construcción. La columna
+  `rooms.next_seq` existe igual, para que el número sobreviva a la muerte del
+  proceso.
+- **RTT de la sala.** Los heartbeats del channel dan la latencia observada de cada
+  miembro; el proceso la tiene junta y de ahí sale
+  `reveal_at = now + max(RTT) + margen` (D2).
 
--- ROOM MEMBERS
-room_members (
-  room_id     UUID REFERENCES rooms(id),
-  user_id     UUID REFERENCES users(id),
-  role        TEXT DEFAULT 'member',    -- 'admin' | 'member'
-  joined_at   TIMESTAMPTZ DEFAULT NOW(),
-  PRIMARY KEY (room_id, user_id)
-)
-
--- ROLL CONFIGURATIONS (Macros)
-roll_configs (
-  id          UUID PRIMARY KEY,
-  user_id     UUID REFERENCES users(id),
-  name        TEXT NOT NULL,
-  config      JSONB NOT NULL,           -- { components: [{dice: 'd6', count: 2}, {bonus: 4}] }
-  created_at  TIMESTAMPTZ,
-  updated_at  TIMESTAMPTZ
-)
-
--- ROLLS (Event Store)
-rolls (
-  id          UUID PRIMARY KEY,
-  user_id     UUID REFERENCES users(id),
-  room_id     UUID REFERENCES rooms(id), -- NULL si personal
-  config_id   UUID REFERENCES roll_configs(id), -- NULL si ad-hoc
-  input       JSONB NOT NULL,           -- configuración usada
-  result      JSONB NOT NULL,           -- { total, breakdown: [...] }
-  rolled_at   TIMESTAMPTZ DEFAULT NOW()
-)
-
--- SKINS (V4)
-skins (
-  id          UUID PRIMARY KEY,
-  name        TEXT,
-  type        TEXT,                     -- 'dice' | 'table' | 'theme'
-  metadata    JSONB,
-  price_cents INT
-)
-
--- USER SKINS (V4)
-user_skins (
-  user_id     UUID REFERENCES users(id),
-  skin_id     UUID REFERENCES skins(id),
-  acquired_at TIMESTAMPTZ,
-  PRIMARY KEY (user_id, skin_id)
-)
-```
-
-> **Decisión de diseño:** `rolls.result` como JSONB permite almacenar el desglose completo sin normalizar ahora. Es extensible sin migración agresiva.
-
-> **Decisión de diseño:** `roll_configs.config` como JSONB permite soportar configuraciones compuestas arbitrarias (2d6 + 4 + 1d8 + bonuses custom) sin esquema rígido. Se valida en servicio.
+**El proceso es coordinación en memoria; Postgres es la verdad.** Una sala sin nadie
+conectado deja de existir como proceso y no pierde nada.
 
 ---
 
-## Arquitectura de Tiradas — Event-Based
+## Camino de una tirada
 
-Las tiradas **siempre** se procesan en backend. El cliente solo envía la intención.
+1. El cliente manda `roll` por el channel con un `client_roll_id` (idempotencia).
+2. El servidor resuelve las variables contra el perfil activo del que tira en esa
+   sala (D4). Si falta una, error explícito: no se tira.
+3. Evalúa los pasos de izquierda a derecha (D3), con CSPRNG.
+4. Persiste: `total` como columna, `breakdown` como JSONB, `seq` asignado (D10, D11).
+5. Calcula `reveal_at` y broadcastea.
+6. `handle_out/3` decide, por socket, si va la tirada completa, la redactada o nada
+   (D5).
+7. Cada cliente anima hasta `reveal_at` y revela ahí.
 
-```
-CLIENT                          SERVER
-  │                               │
-  │── POST /rolls (input: {...}) ──>│
-  │                               │ valida input
-  │                               │ genera RNG seguro (crypto.randomInt)
-  │                               │ persiste en DB
-  │                               │ (V3: emite evento WebSocket a sala)
-  │<── 200 { result, breakdown } ──│
-```
-
-### Generación RNG
-
-- V1-V2: `crypto.randomInt()` de Node.js (CSPRNG).
-- V3+: Mismo CSPRNG, resultado transmitido vía WebSocket a todos los miembros de sala.
-- **No se expone seed ni estado interno.**
-
----
-
-## Arquitectura de Salas — Live (V3)
-
-```
-CLIENT A ──────────────────────── WS ──> SERVER (Socket.IO)
-CLIENT B ──────────────────────── WS ──>   │
-CLIENT C ──────────────────────── WS ──>   │── Room Channel: room:{id}
-                                            │
-                                        Events emitidos:
-                                        - roll:created { userId, result, breakdown }
-                                        - user:joined { userId, username }
-                                        - user:kicked { userId }
-```
-
-### Estrategia de Autenticación en WebSockets
-
-- El cliente envía el JWT en el handshake (`auth.token`).
-- El servidor valida el token antes de permitir la conexión.
-- Si el token expira durante la sesión: reconexión con refresh token.
+El cliente puede arrancar el giro en el frame del tap: durante el blur no hay nada
+legible, así que el resultado recién importa en el asentamiento (D14).
 
 ---
 
 ## Seguridad
 
 | Capa | Mecanismo |
-|------|-----------|
-| Autenticación | JWT (Access 15min + Refresh 7d) |
-| Contraseñas | bcrypt (salt rounds ≥ 12) |
-| Salas privadas | bcrypt sobre password de sala |
-| Rate limiting | express-rate-limit (desde V1 en auth endpoints) |
-| Generación de dados | Server-side con `crypto.randomInt` |
-| WebSockets | JWT validation en handshake |
-| Skins | Validación server-side en cada request que involucre skin activa |
-| SQL Injection | Prisma con prepared statements |
-| CORS | Whitelist estricta desde V1 |
+|---|---|
+| Identidad | Token en los params del socket, resuelto en `connect/3` (D15) |
+| Credencial | Fuera de `users`, en `user_identities`. Mecanismo diferido (D15) |
+| Autorización | **No diferida.** Membresía, rol y visibilidad se verifican server-side |
+| Ingreso a sala | Código de invitación rotable, no contraseña compartida (D6) |
+| Tiradas ocultas | Filtrado por destinatario en `handle_out/3`, nunca en la UI (D5) |
+| Generación de dados | CSPRNG server-side. No se expone seed ni estado (D1) |
+| Rate limiting | Por usuario en el evento `roll` del channel |
+| SQL injection | Ecto con queries parametrizadas |
+| Origins | `check_origin` estricto en producción (en dev, `false` — ver M0) |
+
+Diferir el mecanismo de autenticación **no** difiere los permisos: eso es lo que
+protege los datos, y no depende de cómo iniciás sesión.
 
 ---
 
-## Decisiones Técnicas con Impacto Futuro
+## Decisiones técnicas con impacto futuro
 
-### 1. UUIDs vs Auto-increment IDs
-**Decisión:** UUID para todas las entidades.
-**Por qué:** Permite merge de datos, multi-región futura, y no expone contadores de recursos.
+### 1. UUIDs, no auto-increment
+Permite merge de datos y no expone contadores de recursos. La excepción deliberada
+es `rolls.seq`, que es un contador **por sala** y existe justamente para ser
+ordenable (D10).
 
-### 2. Soft Deletes
-**Decisión:** `archived_at` en `rooms`, `deleted_at` en `users` (V2+).
-**Por qué:** Preserva integridad referencial del historial de tiradas.
+### 2. Soft delete
+`rooms.archived_at`. Preserva la integridad referencial del historial de tiradas: la
+campaña es el registro, y borrarla en duro se lleva puesto el log (D7, D9).
 
-### 3. JSONB para Roll Config y Result
-**Decisión:** JSONB en lugar de tablas normalizadas.
-**Por qué:** La variabilidad de configuraciones de dados RPG es alta. Normalizar ahora es YAGNI.
+### 3. JSONB para `steps` y `breakdown`, columna para `total`
+La variabilidad de configuraciones de dados es alta y normalizarla ahora es YAGNI.
+Pero `total` va como columna real: es lo que hace consultables las estadísticas de
+campaña sin índices GIN (D11).
 
-### 4. Socket.IO vs WS puro
-**Decisión:** Socket.IO.
-**Por qué:** Manejo automático de reconexión, rooms nativas, fallback HTTP polling. El overhead es aceptable en V3.
+### 4. Snapshots en `rolls`
+`template_name`, `profile_name` y el valor de cada variable se **copian** a la tirada.
+Borrar una macro o subir FUERZA no puede reescribir el historial. Un log que se
+reescribe solo no es un log.
 
-### 5. Monolito vs Microservicios
-**Decisión:** Monolito modular hasta V4 al menos.
-**Por qué:** El equipo es pequeño. La complejidad operacional de microservicios en bootstrap es un riesgo mayor que el acoplamiento controlado.
+### 5. Monolito modular
+El equipo es una persona. La complejidad operacional de separar servicios es un
+riesgo mayor que el acoplamiento controlado. Si alguna vez hay que escalar
+horizontalmente, PubSub sobre Erlang distribuido ya cubre el caso sin Redis.
 
 ---
 
-## Módulos del Backend (estructura interna)
+## Estructura del backend
 
 ```
-src/
-  modules/
-    auth/         # register, login, refresh, logout
-    users/        # CRUD de perfil
-    rooms/        # CRUD + membresía + permisos
-    rolls/        # generación, validación, historial
-    skins/        # catálogo, asignación, validación (V4)
-  events/         # event emitters para WebSocket (V3)
-  middleware/     # auth, rate-limit, error handler
-  config/         # env, db, jwt config
-  prisma/         # schema, migrations
+lib/
+  rolling_with_fire/          # dominio, sin Phoenix
+    accounts/                 # users, identidades, tokens
+    profiles/                 # perfiles, variables, templates
+    rooms/                    # salas, membresía, roles, invite codes
+    rolls/                    # evaluación de pasos, RNG, persistencia
+  rolling_with_fire_web/
+    channels/
+      user_socket.ex          # connect/3: toda la superficie de auth (D15)
+      room_channel.ex         # join, roll, history, resume, admin
+    presence.ex
+  room_server.ex              # GenServer por sala: seq, RTT, reveal_at
 ```
+
+La evaluación de una tirada es una función pura sobre `steps` + variables resueltas.
+El RNG entra como parámetro, así que se testea con valores fijos.

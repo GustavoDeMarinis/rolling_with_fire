@@ -1,8 +1,8 @@
 # Contrato de tiempo real — `room:{room_id}`
 
-Un solo canal por sala. **La tirada va por el channel, no por HTTP.** El doc previo
-la mandaba por `POST /rolls` y emitía el evento aparte; eso le entrega el resultado
-al que tiró antes que a nadie, que es justo lo que D2 evita.
+Un solo canal por sala. **La tirada va por el channel, no por HTTP.** Mandarla por
+`POST /rolls` y emitir el evento aparte le entrega el resultado al que tiró antes que
+a nadie, que es justo lo que D2 evita.
 
 ---
 

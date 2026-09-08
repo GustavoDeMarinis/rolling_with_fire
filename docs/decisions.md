@@ -1,7 +1,7 @@
 # Decisiones — MVP
 
-> Registro de decisiones tomadas. Reemplaza lo que contradiga a los documentos
-> previos (ver "Estado de los documentos previos" al final).
+> Registro de decisiones tomadas. Es la fuente de verdad: si otro documento del
+> repo lo contradice, gana este (ver "Estado de la documentación" al final).
 
 ---
 
@@ -178,19 +178,20 @@ al reconectar (`after_seq`) — un solo mecanismo para las dos cosas.
 
 La razón fuerte no es evitar aritmética en el front (es trivial): una columna real
 es **indexable y consultable** — estadísticas de campaña, "todos los 20 naturales",
-promedios por jugador. En JSONB eso no sale sin índices GIN, que es el riesgo T4
-del registro previo.
+promedios por jugador. En JSONB eso no sale sin índices GIN, que era un riesgo
+anotado del diseño anterior.
 
 ## D12 — Stack
 
 - **Backend: Elixir + Phoenix.** Channels/PubSub/Presence son literalmente esto.
   Un WebSocket ocioso en BEAM cuesta casi nada, que es lo que hace viable un
   producto gratis masivo financiado por donaciones.
-- **Sin Redis.** PubSub distribuye sobre Erlang nativo. Elimina el riesgo E1 y
-  parte del T2 del registro previo.
-- **Monetización: donaciones**, no skins ni Google Play Billing. Elimina el riesgo
-  T1 (el eject de Expo, el 🔴 más caro del registro).
-- **Mobile: React Native + Expo** (ver D13).
+- **Sin Redis.** PubSub distribuye sobre Erlang nativo. Elimina de un saque los dos
+  riesgos que traía Socket.IO: el Redis Adapter para multi-instancia y la
+  degradación con muchas salas concurrentes en un VPS chico.
+- **Monetización: donaciones**, no skins ni Google Play Billing. Elimina el eject de
+  Expo, que era el 🔴 más caro del registro de riesgos.
+- **Mobile: Flutter** (ver D13).
 
 ## D13 — Mobile: Flutter
 
@@ -348,18 +349,21 @@ autor es la línea.
 
 ---
 
-## Estado de los documentos previos
+## Estado de la documentación
 
-| Documento | Estado |
+La planificación previa (roadmap V1–V4, epics, stack Node/Express/Prisma/Socket.IO)
+fue **eliminada del repo**: contradecía estas decisiones o duplicaba `mvp.md`. Vive
+en el historial de git, hasta el commit `046e4a8`.
+
+Los documentos vigentes no se pisan entre sí:
+
+| Documento | Qué fija |
 |---|---|
-| `product-vision.md` | Vigente salvo el modelo de monetización (skins → donaciones, D12) |
-| `roadmap.md` | **Superado.** Invierte la tesis del producto: pone las salas live en V3 |
-| `architecture.md` | **Superado** en stack (Node/Express/Prisma/Socket.IO) y en modelo de datos. Su sección de decisiones con impacto futuro sigue siendo válida |
-| `epics/v1-offline.md` | **Superado.** El offline-first contradice D1 |
-| `epics/v2-rooms.md` | Superado en el modelo de ingreso (contraseña → código, D6) y en `owner_id` (D7) |
-| `epics/v3-live.md` | Vigente en espíritu, superado en mecánica: Socket.IO, tirada por HTTP, sin `reveal_at` (D2, D12) |
-| `epics/v4-monetization.md` | **Superado.** Sin skins ni Google Play Billing (D12) |
-| `risks.md` | Vigente. T1, E1 y parte de T2 quedan eliminados por D12. T5 (rotación de refresh tokens) queda en suspenso hasta que D15 elija mecanismo |
-| `metrics.md` | Sin revisar |
-
-No se borró nada de lo anterior. La limpieza es decisión del autor.
+| `decisions.md` | Este. D1–D15: qué se decidió y por qué |
+| `mvp.md` | Alcance y orden de trabajo (M0–M4) |
+| `data-model.md` | Schema, formato de `steps` y de `breakdown` |
+| `realtime-contract.md` | Eventos del channel `room:{id}` |
+| `architecture.md` | Stack, procesos, seguridad, despliegue |
+| `product-vision.md` | Para quién es, cómo se diferencia, cómo se sostiene |
+| `risks.md` | Registro de riesgos vivos |
+| `metrics.md` | Qué se mide y con qué umbral de acción |
